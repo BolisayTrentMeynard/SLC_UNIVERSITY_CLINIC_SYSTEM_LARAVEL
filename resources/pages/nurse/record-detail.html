@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Student Record - ULS Clinic System</title>
+    <script src="../js/login-theme.js"></script>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/student-record.css">
+    <link rel="stylesheet" href="../css/prescription.css">
+    <script src="../js/ui.js" defer></script>
+    <script src="../js/role-nav.js" defer></script>
+    <script src="../js/clinic-api.js" defer></script>
+    <script src="../js/rx-api.js" defer></script>
+    <script src="../js/record-prescriptions.js" defer></script>
+    <script src="../js/departments.js" defer></script>
+    <script src="../js/school-year.js" defer></script>
+    <script src="../js/record-detail.js" defer></script>
+<style>
+        .asm { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .asm[hidden] { display: none; }
+        .asm-backdrop { position: absolute; inset: 0; background: rgba(10, 25, 50, .55); }
+        .asm-card { position: relative; width: min(760px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; margin: 0; }
+        .asm-x { position: absolute; top: 12px; right: 14px; border: 0; background: none; font-size: 28px; line-height: 1; cursor: pointer; color: inherit; }
+    </style>
+</head>
+
+<body>
+    <header class="topbar">
+        <h1>ULS Clinic Management System <span>Prototype v5 (HTML/CSS)</span></h1>
+        <nav aria-label="Account"><a href="../index.html" data-logout>Log out</a></nav>
+    </header>
+    <div class="layout">
+        <aside>
+            <nav aria-label="Menu">
+                <h4>Nurse</h4><a href="../nurse/assess.html">Assess</a><a href="../nurse/medical-records.html" class="on">Student Records</a><a href="../doctor/statistics.html">Statistics</a>
+            </nav>
+        </aside>
+        <main>
+            <div class="back-row">
+                <a class="back" href="../nurse/medical-records.html">&lsaquo; Back to Student Records</a>
+                <span>
+                    <span class="pill neutral readonly-tag" id="readonly-tag" hidden>Read-only</span>
+                </span>
+            </div>
+            <p class="note save-result" id="record-message" role="status" aria-live="polite" hidden></p>
+
+            <div id="record-view" hidden>
+                <section class="box record-head">
+                    <div class="record-head-text">
+                        <small class="eyebrow">Student record</small>
+                        <h2 id="r-name"></h2>
+                        <p class="sub" id="r-line"></p>
+                    </div>
+                    <div class="record-head-actions" id="r-actions">
+                        <a class="btn sec" id="edit-record" href="../nurse/add-student.html">Edit record</a>
+                        <button type="button" class="btn" id="start-assess" hidden>Start assessment</button>
+                    </div>
+                </section>
+
+                <section class="box">
+                    <h3>Identification</h3>
+                    <div class="id-grid" id="r-ident"></div>
+                </section>
+
+                <section class="box">
+                    <h3>Past Medical History</h3>
+                    <table class="hx-table">
+                        <tbody id="r-history"></tbody>
+                    </table>
+                </section>
+
+                <section class="box">
+                    <h3 class="head-note">Laboratory Requirements <span id="r-req-summary"></span></h3>
+                    <table class="hx-table">
+                        <tbody id="r-requirements"></tbody>
+                    </table>
+                </section>
+
+                <section class="box">
+                    <div class="pad">
+                        <div class="f"><label for="r-year">Show vital signs and visits from</label><select id="r-year" autocomplete="off"></select></div>
+                    </div>
+                </section>
+
+                <section class="box">
+                    <h3 class="head-note">Vital Signs <span>From completed visits &middot; newest first</span></h3>
+                    <div class="table-scroll">
+                        <table class="entry-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Height</th>
+                                    <th>Weight</th>
+                                    <th>BMI</th>
+                                    <th>Blood pressure</th>
+                                </tr>
+                            </thead>
+                            <tbody id="r-vitals"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="box">
+                    <h3 class="head-note">Visits <span>Completed visits &middot; newest first</span></h3>
+                    <div class="table-scroll">
+                        <table class="entry-table findings-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Complaint</th>
+                                    <th>Diagnosis</th>
+                                    <th>Action taken</th>
+                                    <th>Doctor</th>
+                                </tr>
+                            </thead>
+                            <tbody id="r-findings"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <div class="asm" id="assessment-modal" hidden>
+                <div class="asm-backdrop" data-close-assess></div>
+                <form class="box visit-form asm-card" id="assessment-box" role="dialog" aria-modal="true" aria-labelledby="a-title" novalidate>
+                    <button type="button" class="asm-x" data-close-assess aria-label="Close">&times;</button>
+                    <p class="note" id="a-error" role="alert" hidden></p>
+                    <section class="form-section">
+                        <h3 id="a-title">New assessment</h3>
+                        <div class="form">
+                            <div class="f"><label for="a-type">Visit type</label><select id="a-type">
+                                    <option value="Consultation">Consultation (sick)</option>
+                                    <option value="Checkup">Checkup (routine)</option>
+                                </select></div>
+                            <div class="f"><label for="a-date">Date (auto)</label><input id="a-date" readonly></div>
+                            <div class="f full"><label for="a-complaint">Chief complaint / purpose of visit *</label><input id="a-complaint" maxlength="500"></div>
+                            <div class="f"><label for="a-bp">Blood pressure *</label><input id="a-bp" placeholder="120/80" inputmode="numeric"></div>
+                            <div class="f"><label for="a-pulse">Pulse rate (bpm)</label><input id="a-pulse" type="number" min="20" max="250"></div>
+                            <div class="f"><label for="a-temp">Body temperature (&deg;C)</label><input id="a-temp" type="number" min="30" max="45" step="0.1"></div>
+                            <div class="f"><label for="a-weight">Weight (kg) *</label><input id="a-weight" type="number" min="1" max="500" step="0.1"></div>
+                            <div class="f"><label for="a-height">Height (cm) *</label><input id="a-height" type="number" min="30" max="300" step="0.1"></div>
+                            <div class="f"><label for="a-bmi">BMI (auto)</label><input id="a-bmi" value="Enter weight and height" readonly></div>
+                            <div class="f full"><label for="a-dx">Initial nurse diagnosis</label><input id="a-dx" maxlength="200"></div>
+                            <div class="f full"><label><input type="checkbox" id="a-labs"> External lab results or documents attached to the printed chart</label></div>
+                            <div class="f full lab-field" hidden><label for="a-lab-name">Outside laboratory / clinic name</label><input id="a-lab-name" maxlength="200" placeholder="Where the lab result came from" autocomplete="off"></div>
+                            <div class="f lab-field" hidden><label for="a-lab-location">Clinic location</label><input id="a-lab-location" maxlength="200" placeholder="Address or city" autocomplete="off"></div>
+                            <div class="f lab-field" hidden><label for="a-lab-date">Date handed in (blank = today)</label><input id="a-lab-date" type="date"></div>
+                        </div>
+                    </section>
+                    <div class="form-actions">
+                        <button class="btn" type="submit" id="a-send">Send to doctor</button>
+                        <button class="btn sec" type="button" data-close-assess>Cancel</button>
+                    </div>
+                </form>
+                </div>
+
+                <section class="box">
+                    <h3 class="head-note">Outside Laboratory Results <span>Clinic, location and date received &middot; results stay on paper</span></h3>
+                    <div class="table-scroll">
+                        <table class="entry-table findings-table">
+                            <thead>
+                                <tr>
+                                    <th>Visit date</th>
+                                    <th>Clinic / laboratory</th>
+                                    <th>Location</th>
+                                    <th>Date received</th>
+                                </tr>
+                            </thead>
+                            <tbody id="r-labs"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="box" id="rx-history"></section>
+            </div>
+        </main>
+    </div>
+</body>
+
+</html>

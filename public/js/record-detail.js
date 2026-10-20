@@ -1,0 +1,293 @@
+/* Student Record page: loads the real record.
+   GET /api/patients/:id          identification
+   GET /api/patients/:id/history  past medical history
+   GET /api/patients/:id/requirements  laboratory requirements (needed before graduating)
+   GET /api/visits?search=<id>    completed visits (the server hides confidential ones from the nurse)
+   Editing opens the Add / Edit form (add-student.html?id=...). Vital signs are recorded on the Assess page.
+   The prescriptions box is filled by record-prescriptions.js from the same ?id= in the address. */
+(function () {
+    'use strict';
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const $ = function (id) { return document.getElementById(id); };
+    const api = window.ClinicAPI;
+    const view = $('record-view');
+    const message = $('record-message');
+    if (!view || !message || !api) return;
+    let year = null;      // school year picker (school-year.js)
+    let scoped = false;   // true while one school year is chosen, for the empty-table messages
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char];
+        });
+    }
+
+    // "2026-10-12" -> "Oct 12, 2026" (no Date object, so no timezone shift)
+    function formatDate(iso) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+        return m ? MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + ', ' + m[1] : '';
+    }
+
+    function ageFrom(iso) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+        if (!m) return '';
+        const now = new Date();
+        const age = now.getFullYear() - Number(m[1]);
+        const before = now.getMonth() + 1 < Number(m[2]) || (now.getMonth() + 1 === Number(m[2]) && now.getDate() < Number(m[3]));
+        return before ? age - 1 : age;
+    }
+
+    function dash(value) {
+        const text = String(value == null ? '' : value).trim();
+        return text ? escapeHtml(text) : '<span class="empty-dash">&mdash;</span>';
+    }
+
+    function showMessage(text) {
+        message.textContent = text;
+        message.hidden = !text;
+    }
+
+    /* ---------- Identification ---------- */
+    function field(label, valueHtml, extra) {
+        return '<div class="id-item' + (extra ? ' ' + extra : '') + '"><span class="id-label">' + escapeHtml(label) + '</span><span class="id-value">' + valueHtml + '</span></div>';
+    }
+
+    function renderIdentification(r) {
+        const age = ageFrom(r.dateOfBirth);
+        $('r-ident').innerHTML =
+            field('Identification no.', dash(r.id)) +
+            field('Last name', dash(r.lastName)) +
+            field('First name', dash(r.firstName)) +
+            field('Middle name', dash(r.middleName)) +
+            field('Department', dash(window.SLCDepartments ? window.SLCDepartments.short(r.college) : r.college)) +
+            field('Course / Year', dash([r.course, r.year].filter(Boolean).join(' - '))) +
+            field('Gender', dash(r.gender)) +
+            field('Age', age === '' ? dash('') : escapeHtml(age)) +
+            field('Date of birth', dash(formatDate(r.dateOfBirth))) +
+            field('Status', dash(r.civilStatus)) +
+            field('Nationality', dash(r.nationality)) +
+            field('Contact number', dash(r.contactNumber)) +
+            field('Address', dash(r.address), 'span-2') +
+            field('Name of guardian', dash(r.guardianName)) +
+            field('Contact no. in case of emergency', dash(r.guardianContact));
+    }
+
+    /* ---------- Past medical history ---------- */
+    function yes(kind) { return '<span class="yn yes-' + kind + '">&#10003; Yes</span>'; }
+    function no() { return '<span class="yn no">No</span>'; }
+
+    function historyRow(label, note, answerHtml, detail) {
+        return '<tr><th scope="row">' + escapeHtml(label) + (note ? ' <small>(' + escapeHtml(note) + ')</small>' : '') + '</th>' +
+            '<td class="hx-answer">' + answerHtml + '</td>' +
+            '<td class="hx-detail">' + (detail ? escapeHtml(detail) : '<span class="empty-dash">&mdash;</span>') + '</td></tr>';
+    }
+
+    function renderHistory(h) {
+        const other = String(h.otherCondition || '').trim();
+        const vaccines = String(h.vaccines || '').trim();
+        $('r-history').innerHTML =
+            historyRow('Asthma', '', h.asthma ? yes('warn') : no(), '') +
+            historyRow('Allergy', '', h.allergy ? yes('warn') : no(), h.allergy ? h.allergyDetails : '') +
+            historyRow('Febrile convulsion', 'Mataas na lagnat', h.febrileConvulsion ? yes('warn') : no(), '') +
+            historyRow('Fainting spell / Dizzy spell', 'Hinihimatay', h.faintingSpell ? yes('warn') : no(), '') +
+            historyRow('Epilepsy', '', h.epilepsy ? yes('warn') : no(), '') +
+            historyRow('Vaccines', 'Bakuna', vaccines ? yes('ok') : no(), vaccines) +
+            '<tr><th scope="row">Other</th><td class="hx-answer">' + (other ? yes('warn') : '<span class="yn no">None</span>') + '</td>' +
+            '<td class="hx-detail">' + (other ? escapeHtml(other) : '<span class="empty-dash">&mdash;</span>') + '</td></tr>';
+    }
+
+    /* ---------- Laboratory requirements ---------- */
+    function renderRequirements(r) {
+        $('r-requirements').innerHTML = r.items.map(function (item) {
+            const answer = !item.applicable ? '<span class="yn no">Not needed</span>'
+                : item.done ? '<span class="yn yes-ok">&#10003; Done</span>' : '<span class="yn yes-warn">Missing</span>';
+            const detail = !item.applicable ? 'Does not apply to male students' : item.done && item.date ? 'Done ' + formatDate(item.date) : '';
+            return '<tr><th scope="row">' + escapeHtml(item.label) + '</th><td class="hx-answer">' + answer + '</td>' +
+                '<td class="hx-detail">' + (detail ? escapeHtml(detail) : '<span class="empty-dash">&mdash;</span>') + '</td></tr>';
+        }).join('');
+        $('r-req-summary').innerHTML = r.complete
+            ? '<span class="pill green">Complete</span> ' + r.completed + ' of ' + r.required
+            : r.completed + ' of ' + r.required + ' complete';
+    }
+
+    /* ---------- Visits (already newest first from the server) ---------- */
+    function emptyRow(cols, text) {
+        return '<tr class="no-match"><td colspan="' + cols + '">' + escapeHtml(text) + '</td></tr>';
+    }
+    const has = function (n) { return typeof n === 'number' && isFinite(n) && n > 0; };
+
+    function renderVisits(visits) {
+        $('r-vitals').innerHTML = visits.length ? visits.map(function (v) {
+            const bp = /^\d+\/\d+$/.test(v.bp || '') ? v.bp.replace('/', ' / ') : '';
+            return '<tr><td>' + escapeHtml(formatDate(v.visitDate)) + '</td>' +
+                '<td>' + (has(v.heightCm) ? escapeHtml(v.heightCm) + ' cm' : dash('')) + '</td>' +
+                '<td>' + (has(v.weightKg) ? escapeHtml(v.weightKg) + ' kg' : dash('')) + '</td>' +
+                '<td>' + (has(v.bmi) ? escapeHtml(v.bmi) : dash('')) + '</td>' +
+                '<td>' + dash(bp) + '</td></tr>';
+        }).join('') : emptyRow(5, scoped ? 'No vital signs recorded in this school year.' : 'No vital signs recorded yet.');
+
+        $('r-findings').innerHTML = visits.length ? visits.map(function (v) {
+            return '<tr><td>' + escapeHtml(formatDate(v.visitDate)) + '</td>' +
+                '<td>' + dash(v.visitType) + '</td>' +
+                '<td>' + dash(v.complaint) + '</td>' +
+                '<td>' + dash(v.diagnosis) + '</td>' +
+                '<td>' + dash(v.actionsTaken) + '</td>' +
+                '<td>' + dash(v.doctorName || v.createdByName) + '</td></tr>';
+        }).join('') : emptyRow(6, scoped ? 'No completed visits in this school year.' : 'No completed visits yet.');
+
+        const labs = visits.filter(function (v) { return v.labSourceName; });
+        $('r-labs').innerHTML = labs.length ? labs.map(function (v) {
+            return '<tr><td>' + escapeHtml(formatDate(v.visitDate)) + '</td>' +
+                '<td>' + dash(v.labSourceName) + '</td>' +
+                '<td>' + dash(v.labSourceLocation) + '</td>' +
+                '<td>' + dash(formatDate(v.labReceivedAt)) + '</td></tr>';
+        }).join('') : emptyRow(4, scoped ? 'No outside laboratory results in this school year.' : 'No outside laboratory results recorded yet.');
+    }
+
+    /* ---------- nurse: new assessment on the student's own page ---------- */
+    function setupAssessment(patient) {
+        const form = $('assessment-box');
+        if (!form) return;
+        const pad = function (v) { return String(v).padStart(2, '0'); };
+        const now = new Date();
+        const today = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+        $('a-date').value = today;
+        const modal = $('assessment-modal');
+        const open = function () {
+            $('a-error').hidden = true;
+            modal.hidden = false;
+            document.body.style.overflow = 'hidden';
+            $('a-complaint').focus();
+        };
+        const close = function () {
+            modal.hidden = true;
+            document.body.style.overflow = '';
+            $('start-assess').focus();
+        };
+        $('start-assess').addEventListener('click', open);
+        modal.querySelectorAll('[data-close-assess]').forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && !modal.hidden) close();
+        });
+        $('start-assess').hidden = false;
+        const updateBmi = function () {
+            const kg = parseFloat($('a-weight').value), cm = parseFloat($('a-height').value);
+            $('a-bmi').value = kg > 0 && cm > 0 ? (kg / Math.pow(cm / 100, 2)).toFixed(1) : 'Enter weight and height';
+        };
+        $('a-weight').addEventListener('input', updateBmi);
+        $('a-height').addEventListener('input', updateBmi);
+        // The outside lab fields only appear while "External lab results" is ticked; unticking hides and clears them.
+        const syncLabFields = function () {
+            const on = $('a-labs').checked;
+            form.querySelectorAll('.lab-field').forEach(function (field) { field.hidden = !on; });
+            if (!on) ['a-lab-name', 'a-lab-location', 'a-lab-date'].forEach(function (id) { $(id).value = ''; });
+            else {
+                // Scroll the nearest scrolling box (the popup or the page) all the way down.
+                let box = $('a-lab-date').parentElement;
+                while (box && !(/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight)) box = box.parentElement;
+                const scroller = box || document.scrollingElement;
+                scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+            }
+        };
+        $('a-labs').addEventListener('change', syncLabFields);
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const button = $('a-send');
+            button.disabled = true;
+            try {
+                await api.getSession();
+                const result = await api.request('/api/visits/triage', {
+                    method: 'POST',
+                    body: {
+                        patientId: patient.id, visitType: $('a-type').value, visitDate: $('a-date').value || today,
+                        complaint: $('a-complaint').value, bp: $('a-bp').value, weight: $('a-weight').value,
+                        height: $('a-height').value, pulseRate: $('a-pulse').value, temperature: $('a-temp').value,
+                        initialDiagnosis: $('a-dx').value, externalLabsAttached: $('a-labs').checked,
+                        labSourceName: $('a-lab-name').value, labSourceLocation: $('a-lab-location').value,
+                        labReceivedAt: $('a-lab-date').value
+                    }
+                });
+                form.reset();
+                syncLabFields();
+                close();
+                $('a-date').value = today;
+                updateBmi();
+                showMessage('Assessment saved. Visit #' + result.visit.id + ' for ' + patient.name + ' is in the doctor\u2019s queue.');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } catch (error) {
+                if (error.status === 401) { window.location.assign('/index.html'); return; }
+                $('a-error').textContent = error.message;
+                $('a-error').hidden = false;
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } finally { button.disabled = false; }
+        });
+    }
+
+    /* ---------- page ---------- */
+    function fullName(r) {
+        const first = [r.firstName, r.middleName].filter(Boolean).join(' ');
+        return r.lastName ? r.lastName + (first ? ', ' + first : '') : r.name;
+    }
+
+    function render(p, history, visits, requirements) {
+        const name = fullName(p);
+        document.title = name + ' - ULS Clinic System';
+        $('r-name').textContent = name;
+        const age = ageFrom(p.dateOfBirth);
+        $('r-line').textContent = ['ID ' + p.id, window.SLCDepartments ? window.SLCDepartments.short(p.college) : p.college, p.gender, age === '' ? '' : age + ' years old'].filter(Boolean).join(' · ');
+        $('edit-record').setAttribute('href', '../nurse/add-student.html?id=' + encodeURIComponent(p.id));
+        renderIdentification(p);
+        renderHistory(history);
+        renderRequirements(requirements);
+        renderVisits(visits);
+        view.hidden = false;
+    }
+
+    function fail(error) {
+        if (error.status === 401) { window.location.assign('/index.html'); return; }
+        view.hidden = true;
+        showMessage(error.status === 404 ? 'Student record not found.' : error.message);
+    }
+
+    const id = new URLSearchParams(location.search).get('id');
+    if (!id) { showMessage('No student selected. Go back to Student Records and open one.'); return; }
+    const path = '/api/patients/' + encodeURIComponent(id);
+
+    // Completed visits of this student, for the chosen school year (every year when none is chosen).
+    function loadVisits(patientId) {
+        const chosen = year ? year.value() : '';
+        scoped = !!chosen;
+        return api.request('/api/visits?search=' + encodeURIComponent(id) + (chosen ? '&schoolYear=' + encodeURIComponent(chosen) : ''))
+            .then(function (result) { return result.visits.filter(function (v) { return v.patientId === patientId; }); });
+    }
+
+    Promise.all([api.getSession(), api.request(path), api.request(path + '/history'), api.request(path + '/requirements')])
+        .then(async function (results) {
+            const session = results[0], patient = results[1].patient, history = results[2].history, requirements = results[3].requirements;
+            // A student's own record shows every school year at first, so nothing in the history is hidden.
+            // The picker narrows the vital signs and visits to one school year.
+            const yearSelect = $('r-year');
+            if (yearSelect && window.SchoolYear) {
+                year = await window.SchoolYear.mount(yearSelect, {
+                    defaultAll: true,
+                    persist: false,
+                    onChange: function () {
+                        loadVisits(patient.id).then(renderVisits).catch(function (error) {
+                            if (error.status === 401) window.location.assign('/index.html');
+                            else showMessage(error.message);
+                        });
+                    }
+                });
+            }
+            const visits = await loadVisits(patient.id);
+            render(patient, history, visits, requirements);
+            // Doctors see the record read-only: tag shown, Edit hidden.
+            if (session.user.role === 'doctor') {
+                $('readonly-tag').hidden = false;
+                $('r-actions').hidden = true;
+            } else if (session.user.role === 'nurse') {
+                setupAssessment(patient);
+            }
+        })
+        .catch(fail);
+})();
