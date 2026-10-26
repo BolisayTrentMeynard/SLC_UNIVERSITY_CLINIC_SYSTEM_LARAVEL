@@ -7,6 +7,14 @@ trait ClinicApi
 {
     private function useCookies(?array $actor): void
     {
+        // The test app keeps ONE session store alive for the whole test, so the last login would leak into
+        // the next request (even a logged-out one). A real browser request starts empty and loads the
+        // session from its cookie, so empty the store first.
+        $this->app['session']->driver()->flush();
+
+        // json() requests only carry cookies when credentials are on; without this the session cookie
+        // below is never sent and every request is answered by whatever session leaked from before.
+        $this->withCredentials();
         $this->defaultCookies = [];
         $this->unencryptedCookies = $actor ? [config('session.cookie') => $actor['cookie']] : [];
     }

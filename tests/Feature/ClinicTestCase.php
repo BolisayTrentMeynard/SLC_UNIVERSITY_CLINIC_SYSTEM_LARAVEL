@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use Database\Seeders\DatabaseSeeder;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Support\EnforcedCsrfToken;
 use Tests\Support\ClinicApi;
 use Tests\TestCase;
 
@@ -24,6 +26,8 @@ abstract class ClinicTestCase extends TestCase
         }
 
         parent::setUp();
+        // Check CSRF tokens in tests too (Laravel turns the check off under phpunit by default).
+        $this->app->bind(ValidateCsrfToken::class, EnforcedCsrfToken::class);
         $this->seed(DatabaseSeeder::class);
     }
 }

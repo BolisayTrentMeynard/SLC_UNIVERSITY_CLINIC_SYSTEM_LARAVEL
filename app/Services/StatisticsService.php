@@ -91,6 +91,15 @@ class StatisticsService
         return [$where, $params];
     }
 
+    /** Only a doctor may see confidential visits: for anyone else they are left out of every count (same rule as PatientService). */
+    private static function hideConfidential(array $conditions, array $actor, string $column = 'v.confidential'): array
+    {
+        if (($actor['role'] ?? '') !== 'doctor') {
+            $conditions[] = "{$column} = 0";
+        }
+        return $conditions;
+    }
+
     private static function requireStaff(array $actor, string $message = 'Clinic staff access required.'): void
     {
         Check::requireRole($actor, self::STAFF, $message);
@@ -106,7 +115,7 @@ class StatisticsService
     {
         self::requireStaff($actor, 'Clinic staff access required for statistics.');
         $f = self::narrowToSchoolYear($input);
-        [$where, $params] = self::filters($f, ["v.status = 'completed'", 'v.screened_copy_of IS NULL']);
+        [$where, $params] = self::filters($f, self::hideConfidential(["v.status = 'completed'", 'v.screened_copy_of IS NULL'], $actor));
         $res = DB::selectOne(
             "SELECT COUNT(*) AS total_visits,
                     COUNT(DISTINCT v.patient_id) AS unique_patients,
@@ -122,7 +131,7 @@ class StatisticsService
         $screened = (int) ($res->checkups_screened ?? 0);
 
         // Screening records generated (inside the school year, when one is chosen)
-        $copyWhere = ['screened_copy_of IS NOT NULL', "status <> 'cancelled'"];
+        $copyWhere = self::hideConfidential(['screened_copy_of IS NOT NULL', "status <> 'cancelled'"], $actor, 'confidential');
         $copyParams = [];
         if (! empty($input['schoolYear'])) {
             if (! self::isBlank($f['startDate'] ?? '')) {
@@ -156,7 +165,7 @@ class StatisticsService
         self::requireStaff($actor);
         $f = self::narrowToSchoolYear($input);
         [$where, $params] = self::filters(
-            $f, ["v.status = 'completed'", 'v.screened_copy_of IS NULL', "v.diagnosis <> ''", 'v.diagnosis IS NOT NULL'], true, true
+            $f, self::hideConfidential(["v.status = 'completed'", 'v.screened_copy_of IS NULL', "v.diagnosis <> ''", 'v.diagnosis IS NOT NULL'], $actor), true, true
         );
         $clause = 'WHERE ' . implode(' AND ', $where);
         $total = (int) (DB::selectOne("SELECT COUNT(*) AS total_diagnosed FROM visits v JOIN patients p ON p.id = v.patient_id {$clause}", $params)->total_diagnosed ?? 0);
@@ -184,7 +193,7 @@ class StatisticsService
     {
         self::requireStaff($actor);
         $f = self::narrowToSchoolYear($input);
-        [$where, $params] = self::filters($f, ["v.status = 'completed'", 'v.screened_copy_of IS NULL'], false);
+        [$where, $params] = self::filters($f, self::hideConfidential(["v.status = 'completed'", 'v.screened_copy_of IS NULL'], $actor), false);
         $clause = 'WHERE ' . implode(' AND ', $where);
         $colleges = DB::select(
             "SELECT COALESCE(NULLIF(p.college, ''), 'Unspecified') AS college,
@@ -240,7 +249,7 @@ class StatisticsService
     {
         self::requireStaff($actor);
         $f = self::narrowToSchoolYear($input);
-        [$bmiWhere, $bmiParams] = self::filters($f, ["v.status = 'completed'", 'v.screened_copy_of IS NULL', 'v.bmi IS NOT NULL']);
+        [$bmiWhere, $bmiParams] = self::filters($f, self::hideConfidential(["v.status = 'completed'", 'v.screened_copy_of IS NULL', 'v.bmi IS NOT NULL'], $actor));
         $bmiRows = DB::select(
             "SELECT category, COUNT(*) AS n FROM (SELECT COALESCE(NULLIF(v.bmi_status, ''), 'Unspecified') AS category
                FROM visits v JOIN patients p ON p.id = v.patient_id
@@ -254,8 +263,8 @@ class StatisticsService
         $thisStart = self::daysAgo(6);
         $lastStart = self::daysAgo(13);
         $lastEnd = self::daysAgo(7);
-        $weekWhere = ["v.status = 'completed'", 'v.screened_copy_of IS NULL', "v.diagnosis <> ''",
-            'v.diagnosis IS NOT NULL', 'v.visit_date >= ?', 'v.visit_date <= ?'];
+        $weekWhere = self::hideConfidential(["v.status = 'completed'", 'v.screened_copy_of IS NULL', "v.diagnosis <> ''",
+            'v.diagnosis IS NOT NULL', 'v.visit_date >= ?', 'v.visit_date <= ?'], $actor);
         $weekParams = [$thisStart, $lastStart, $lastEnd, $lastStart, $today];
         $scopeSql = self::scopeCondition($f['scope'] ?? '');
         if ($scopeSql !== '') {

@@ -102,7 +102,8 @@ Route::middleware(SecurityHeaders::class)->group(function () {
 
     // Unknown /api paths with a change method (POST, PUT, DELETE) also get JSON.
     Route::match(['POST', 'PUT', 'PATCH', 'DELETE'], '/api/{any}', fn () => response()->json(['error' => 'API endpoint not found.'], 404))
-        ->where('any', '.*');
+        ->where('any', '.*')
+        ->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class); // a missing route is a 404, not a CSRF error
 
     // Anything else: unknown /api paths get JSON, other paths a plain 404 (both carry the security headers).
     Route::fallback(function (Request $request) {
