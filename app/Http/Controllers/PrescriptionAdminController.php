@@ -118,7 +118,7 @@ class PrescriptionAdminController extends Controller
             return $this->error('Reason is required.', 400);
         }
         if (mb_strlen($reason) > 300) {
-            return $this->error('Reason must be 300 characters or fewer.', 400);
+            return $this->error('Reason must be at most 300 characters.', 400);
         }
         $changed = DB::update(
             "UPDATE prescriptions SET status = 'cancelled', cancelled_reason = ? WHERE id = ? AND status = 'pending'",

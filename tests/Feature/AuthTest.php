@@ -11,6 +11,14 @@ class AuthTest extends ClinicTestCase
             ->assertJsonStructure(['error']);
     }
 
+    public function test_session_user_has_the_same_keys_as_node(): void
+    {
+        $nurse = $this->nurse();
+        $user = $this->api($nurse, 'GET', '/api/session')->json('user');
+        $this->assertSame(['id', 'name', 'patientId', 'role', 'username'], collect(array_keys($user))->sort()->values()->all());
+        $this->assertNull($user['patientId']);
+    }
+
     public function test_login_returns_user_and_csrf_token(): void
     {
         $response = $this->postJson('/api/login', ['username' => 'nurse1', 'password' => 'clinic-dev-2026', 'portal' => 'nurse']);
@@ -47,8 +55,9 @@ class AuthTest extends ClinicTestCase
     {
         $nurse = $this->nurse();
         $bad = array_merge($nurse, ['csrf' => 'not-the-token']);
-        $status = $this->api($bad, 'POST', '/api/logout')->getStatusCode();
-        $this->assertContains($status, [403, 419], "Expected 403 or 419 for a wrong CSRF token, got {$status}.");
+        $refused = $this->api($bad, 'POST', '/api/logout');
+        $refused->assertStatus(403)->assertExactJson(['error' => 'Invalid CSRF token. Reload the page and try again.']);
+        $this->assertNotNull($refused->headers->get('Content-Security-Policy'));   // the refusal carries the security headers too
         // The session is still alive: the refused request did not log anyone out.
         $this->api($nurse, 'GET', '/api/session')->assertOk();
     }

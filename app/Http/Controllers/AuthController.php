@@ -47,8 +47,10 @@ class AuthController extends Controller
 
     public function session(Request $request)
     {
+        $user = $request->session()->get('user');
+        $user['patientId'] ??= null; // the Node app always sends this key
         return response()->json([
-            'user' => $request->session()->get('user'),
+            'user' => $user,
             'csrfToken' => csrf_token(),
         ]);
     }

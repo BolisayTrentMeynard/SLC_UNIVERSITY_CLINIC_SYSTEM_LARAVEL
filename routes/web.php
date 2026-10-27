@@ -11,13 +11,14 @@ use App\Http\Controllers\SchoolYearController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VisitController;
 use App\Http\Middleware\OriginCheck;
-use App\Http\Middleware\SecurityHeaders;
+use App\Http\Middleware\RequireStaff;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
-// Every route below gets the security headers (login page, API, staff pages).
-Route::middleware(SecurityHeaders::class)->group(function () {
+// Every route below gets the security headers (added in bootstrap/app.php, outside everything else).
+Route::group([], function () {
 
     // Login page
     Route::get('/', fn () => response()->file(public_path('index.html')));
@@ -100,15 +101,22 @@ Route::middleware(SecurityHeaders::class)->group(function () {
         ->whereIn('folder', ['doctor', 'nurse'])
         ->where('page', '[A-Za-z0-9_-]+');
 
-    // Unknown /api paths with a change method (POST, PUT, DELETE) also get JSON.
-    Route::match(['POST', 'PUT', 'PATCH', 'DELETE'], '/api/{any}', fn () => response()->json(['error' => 'API endpoint not found.'], 404))
+    // Unknown /api paths answer like Node does: not logged in = 401, a change without a CSRF token = 403, otherwise 404 JSON.
+    $unknownApi = function (Request $request) {
+        $notFound = fn () => response()->json(['error' => 'API endpoint not found.'], 404);
+        return app(RequireStaff::class)->handle(
+            $request,
+            fn ($req) => app(ValidateCsrfToken::class)->handle($req, $notFound)
+        );
+    };
+    Route::match(['POST', 'PUT', 'PATCH', 'DELETE'], '/api/{any}', $unknownApi)
         ->where('any', '.*')
-        ->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class); // a missing route is a 404, not a CSRF error
+        ->withoutMiddleware(ValidateCsrfToken::class); // checked by hand above, after the login check
 
-    // Anything else: unknown /api paths get JSON, other paths a plain 404 (both carry the security headers).
-    Route::fallback(function (Request $request) {
+    // Anything else: unknown /api paths as above, other paths a plain 404 (both carry the security headers).
+    Route::fallback(function (Request $request) use ($unknownApi) {
         if ($request->is('api/*')) {
-            return response()->json(['error' => 'API endpoint not found.'], 404);
+            return $unknownApi($request);
         }
         abort(404);
     });
